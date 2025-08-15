@@ -1,10 +1,7 @@
 import os
-import asyncio
-import base64
-from io import BytesIO
 from dotenv import load_dotenv
+from io import BytesIO
 from huggingface_hub import InferenceClient
-from PIL import Image
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -20,16 +17,16 @@ load_dotenv()
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 HF_TOKEN = os.getenv("HF_TOKEN")
 
-# Diccionario con modelos públicos y gratuitos en Hugging Face
+# Diccionario con modelos disponibles
 MODELOS = {
-    "Stable Diffusion 2.1": "stabilityai/stable-diffusion-2-1-base",
-    "Stable Diffusion 1.5": "runwayml/stable-diffusion-v1-5",
-    "DeepFloyd IF": "deepfloyd/IF-I-XL-v1.0",
+    "Anime": "black-forest-labs/FLUX.1-Krea-dev",
+    "Realista": "Qwen/Qwen-Image",
+    "Estilo Flux": "black-forest-labs/FLUX.1-schnell",
 }
 
-# Cliente huggingface con token
+# Cliente fal-ai con el token
 client = InferenceClient(
-    provider="huggingface",
+    provider="fal-ai",
     api_key=HF_TOKEN,
 )
 
@@ -59,43 +56,12 @@ async def seleccionar_modelo(update: Update, context: ContextTypes.DEFAULT_TYPE)
         text=f"Modelo seleccionado: {modelo_elegido}. Ahora envíame el texto para generar la imagen."
     )
 
-async def decodificar_imagen(image_data):
-    """Convierte base64 o bytes a PIL.Image"""
-    if isinstance(image_data, str):
-        # Base64
-        decoded = base64.b64decode(image_data)
-        return Image.open(BytesIO(decoded))
-    elif isinstance(image_data, bytes):
-        return Image.open(BytesIO(image_data))
-    else:
-        raise ValueError("Formato de imagen desconocido")
-
-async def generar_imagenes(prompt: str, modelo: str):
-    """
-    Genera una o varias imágenes del prompt usando el modelo.
-    Devuelve una lista de objetos PIL.Image
-    """
-    result = await client.text_to_image(
+async def generar_imagen(prompt: str, modelo: str):
+    image = client.text_to_image(
         prompt,
-        model=MODELOS[modelo]
+        model=modelo
     )
-
-    imagenes = []
-
-    # Si devuelve un dict con key 'images' -> lista de imágenes
-    if isinstance(result, dict) and "images" in result:
-        for img_data in result["images"]:
-            imagenes.append(await decodificar_imagen(img_data))
-    # Si devuelve un dict con key 'image_base64' -> una sola imagen
-    elif isinstance(result, dict) and "image_base64" in result:
-        imagenes.append(await decodificar_imagen(result["image_base64"]))
-    # Si devuelve bytes directamente
-    elif isinstance(result, bytes):
-        imagenes.append(await decodificar_imagen(result))
-    else:
-        raise ValueError("No se pudo decodificar la imagen generada")
-
-    return imagenes
+    return image  # Objeto PIL.Image
 
 async def manejar_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     usuario_id = update.message.from_user.id
@@ -105,17 +71,16 @@ async def manejar_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    modelo_actual = usuario_modelo[usuario_id]
+    modelo_actual = MODELOS[usuario_modelo[usuario_id]]
     prompt = update.message.text
-    await update.message.reply_text("Generando imagen(es), por favor espera...")
+    await update.message.reply_text("Generando imagen, por favor espera...")
 
     try:
-        imagenes = await generar_imagenes(prompt, modelo_actual)
-        for img in imagenes:
-            bio = BytesIO()
-            img.save(bio, format="PNG")
-            bio.seek(0)
-            await update.message.reply_photo(photo=bio)
+        image = await generar_imagen(prompt, modelo_actual)
+        bio = BytesIO()
+        image.save(bio, format="PNG")
+        bio.seek(0)
+        await update.message.reply_photo(photo=bio)
     except Exception as e:
         await update.message.reply_text(f"Error generando la imagen: {str(e)}")
 
