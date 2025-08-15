@@ -17,25 +17,23 @@ load_dotenv()
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 HF_TOKEN = os.getenv("HF_TOKEN")
 
-# Diccionario con modelos disponibles
+# Diccionario con modelos gratuitos
 MODELOS = {
-    "Anime": "black-forest-labs/FLUX.1-Krea-dev",
-    "Realista": "Qwen/Qwen-Image",
-    "Estilo Flux": "black-forest-labs/FLUX.1-schnell",
+    "OpenJourney": "prompthero/openjourney-v4",             # Estilo anime/realista
+    "StableDiffusion": "stabilityai/stable-diffusion-2-1",  # Imagen realista
+    "Runway": "runwayml/stable-diffusion-v1-5",             # Imagen realista
 }
 
-# Cliente fal-ai con el token
-client = InferenceClient(
-    provider="fal-ai",
-    api_key=HF_TOKEN,
-)
+# Cliente Hugging Face Inference
+client = InferenceClient(api_key=HF_TOKEN)
 
 # Variable global para guardar el modelo seleccionado por usuario
 usuario_modelo = {}
 
+# ---- COMANDOS ----
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
-        [InlineKeyboardButton(name, callback_data=name)] for name in MODELOS.keys()
+        [InlineKeyboardButton(nombre, callback_data=nombre)] for nombre in MODELOS.keys()
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
@@ -46,6 +44,7 @@ async def reload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     usuario_modelo.clear()
     await update.message.reply_text("El bot ha sido reiniciado. Usa /start para comenzar de nuevo.")
 
+# ---- CALLBACK PARA SELECCIÓN DE MODELO ----
 async def seleccionar_modelo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -56,19 +55,24 @@ async def seleccionar_modelo(update: Update, context: ContextTypes.DEFAULT_TYPE)
         text=f"Modelo seleccionado: {modelo_elegido}. Ahora envíame el texto para generar la imagen."
     )
 
+# ---- FUNCIONES DE GENERACIÓN DE IMAGEN ----
 async def generar_imagen(prompt: str, modelo: str):
+    """
+    Genera imagen usando Hugging Face Inference API gratuita.
+    Devuelve un objeto PIL.Image.
+    """
     image = client.text_to_image(
         prompt,
         model=modelo
     )
-    return image  # Objeto PIL.Image
+    return image
 
+# ---- HANDLER DE MENSAJES ----
 async def manejar_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     usuario_id = update.message.from_user.id
+
     if usuario_id not in usuario_modelo:
-        await update.message.reply_text(
-            "Por favor, primero selecciona un modelo usando /start."
-        )
+        await update.message.reply_text("Por favor, primero selecciona un modelo usando /start.")
         return
 
     modelo_actual = MODELOS[usuario_modelo[usuario_id]]
@@ -84,6 +88,7 @@ async def manejar_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"Error generando la imagen: {str(e)}")
 
+# ---- MAIN ----
 def main():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
