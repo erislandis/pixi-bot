@@ -1,8 +1,6 @@
 import os
 from dotenv import load_dotenv
 from io import BytesIO
-import base64
-from PIL import Image
 from huggingface_hub import InferenceClient
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -19,16 +17,20 @@ load_dotenv()
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 HF_TOKEN = os.getenv("HF_TOKEN")
 
-# Modelos gratuitos
+# Diccionario con modelos públicos y gratuitos en Hugging Face
 MODELOS = {
-    "OpenJourney": "prompthero/openjourney-v4",
-    "Stable Diffusion 2.1": "stabilityai/stable-diffusion-2-1",
-    "Runway SD v1.5": "runwayml/stable-diffusion-v1-5",
+    "Stable Diffusion 2.1": "stabilityai/stable-diffusion-2-1-base",
+    "Stable Diffusion 1.5": "runwayml/stable-diffusion-v1-5",
+    "DeepFloyd IF": "deepfloyd/IF-I-XL-v1.0",
 }
 
-# Cliente Hugging Face
-client = InferenceClient(api_key=HF_TOKEN)
+# Cliente huggingface con token
+client = InferenceClient(
+    provider="huggingface",
+    api_key=HF_TOKEN,
+)
 
+# Variable global para guardar el modelo seleccionado por usuario
 usuario_modelo = {}
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -55,28 +57,22 @@ async def seleccionar_modelo(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
 
 async def generar_imagen(prompt: str, modelo: str):
-    # Solicitud a Hugging Face
-    result = client.text_to_image(prompt, model=modelo)
-    
-    # La respuesta es un JSON con base64
-    if isinstance(result, list) and "image" in result[0]:
-        img_base64 = result[0]["image"]
-        img_bytes = base64.b64decode(img_base64)
-        return Image.open(BytesIO(img_bytes))
-    
-    # Si falla
-    raise Exception("No se pudo procesar la imagen desde la respuesta de la API")
+    image = client.text_to_image(
+        prompt,
+        model=MODELOS[modelo]
+    )
+    return image  # Objeto PIL.Image
 
 async def manejar_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     usuario_id = update.message.from_user.id
     if usuario_id not in usuario_modelo:
-        await update.message.reply_text("Por favor, primero selecciona un modelo usando /start.")
+        await update.message.reply_text(
+            "Por favor, primero selecciona un modelo usando /start."
+        )
         return
-
-    modelo_actual = MODELOS[usuario_modelo[usuario_id]]
+    modelo_actual = usuario_modelo[usuario_id]
     prompt = update.message.text
-    await update.message.reply_text("🎨 Generando imagen, por favor espera...")
-
+    await update.message.reply_text("Generando imagen, por favor espera...")
     try:
         image = await generar_imagen(prompt, modelo_actual)
         bio = BytesIO()
@@ -84,7 +80,7 @@ async def manejar_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         bio.seek(0)
         await update.message.reply_photo(photo=bio)
     except Exception as e:
-        await update.message.reply_text(f"⚠ Error generando la imagen: {str(e)}")
+        await update.message.reply_text(f"Error generando la imagen: {str(e)}")
 
 def main():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
