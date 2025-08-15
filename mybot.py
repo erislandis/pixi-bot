@@ -1,4 +1,5 @@
 import os
+import asyncio
 from io import BytesIO
 from dotenv import load_dotenv
 from huggingface_hub import InferenceClient
@@ -17,17 +18,24 @@ load_dotenv()
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 HF_TOKEN = os.getenv("HF_TOKEN")
 
-# Modelos gratuitos de Hugging Face para texto a imagen
+# Modelos gratuitos de Hugging Face
 MODELOS = {
     "Anime": "Linaqruf/anything-v3.0",
     "Realista": "runwayml/stable-diffusion-v1-5",
     "Estilo Flux": "stabilityai/stable-diffusion-2-1-base"
 }
 
+# Descriptores extra por estilo para mejorar calidad
+DESCRIPTORES = {
+    "Anime": "masterpiece, best quality, anime style, vibrant colors, detailed character",
+    "Realista": "ultra realistic, photorealistic, high detail, 8k, cinematic lighting",
+    "Estilo Flux": "futuristic, cyberpunk, abstract art, high detail, vivid colors"
+}
+
 # Cliente Hugging Face
 client = InferenceClient(token=HF_TOKEN)
 
-# Variable para guardar estilo/modelo elegido por usuario
+# Variable global para guardar estilo/modelo del usuario
 usuario_modelo = {}
 
 # /start → menú de selección
@@ -37,7 +45,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
-        "¡Hola! Por favor selecciona el estilo de imagen que deseas:",
+        "¡Hola! Selecciona el estilo de imagen que deseas:",
         reply_markup=reply_markup
     )
 
@@ -59,24 +67,30 @@ async def seleccionar_modelo(update: Update, context: ContextTypes.DEFAULT_TYPE)
         text=f"Estilo seleccionado: {modelo_elegido}. Ahora envíame el texto para generar la imagen."
     )
 
-# Función SÍNCRONA para generar imagen con Hugging Face
+# Función SÍNCRONA para generar imagen
 def generar_imagen(prompt: str, modelo: str):
-    image_bytes = client.text_to_image(prompt, model=modelo)
-    return image_bytes
+    return client.text_to_image(prompt, model=modelo)
 
-# Manejar texto del usuario y generar imagen
+# Manejar prompt del usuario
 async def manejar_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     usuario_id = update.message.from_user.id
     if usuario_id not in usuario_modelo:
         await update.message.reply_text("Primero selecciona un estilo usando /start.")
         return
 
-    modelo_actual = MODELOS[usuario_modelo[usuario_id]]
-    prompt = update.message.text
-    await update.message.reply_text("Generando imagen... espera unos segundos.")
+    estilo = usuario_modelo[usuario_id]
+    modelo_actual = MODELOS[estilo]
+    prompt_usuario = update.message.text
+    # Añadir descriptores para mejorar calidad según estilo
+    prompt_final = f"{prompt_usuario}, {DESCRIPTORES[estilo]}"
+
+    await update.message.reply_text("Generando imagen... esto puede tardar unos segundos.")
 
     try:
-        image_bytes = generar_imagen(prompt, modelo_actual)
+        # Ejecutar función síncrona en thread separado
+        loop = asyncio.get_running_loop()
+        image_bytes = await loop.run_in_executor(None, generar_imagen, prompt_final, modelo_actual)
+
         bio = BytesIO(image_bytes)
         bio.name = "imagen.png"
         bio.seek(0)
