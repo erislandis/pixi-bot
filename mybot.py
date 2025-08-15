@@ -19,9 +19,9 @@ HF_TOKEN = os.getenv("HF_TOKEN")
 
 # Modelos gratuitos de Hugging Face para texto a imagen
 MODELOS = {
-    "Anime": "Linaqruf/anything-v3.0",  # Anime-style
-    "Realista": "runwayml/stable-diffusion-v1-5",  # Realistic SD 1.5
-    "Estilo Flux": "stabilityai/stable-diffusion-2-1-base"  # Futurista
+    "Anime": "Linaqruf/anything-v3.0",
+    "Realista": "runwayml/stable-diffusion-v1-5",
+    "Estilo Flux": "stabilityai/stable-diffusion-2-1-base"
 }
 
 # Cliente Hugging Face
@@ -59,7 +59,7 @@ async def seleccionar_modelo(update: Update, context: ContextTypes.DEFAULT_TYPE)
         text=f"Estilo seleccionado: {modelo_elegido}. Ahora envíame el texto para generar la imagen."
     )
 
-# Función para generar imagen con HF (no async)
+# Función SÍNCRONA para generar imagen con Hugging Face
 def generar_imagen(prompt: str, modelo: str):
     image_bytes = client.text_to_image(prompt, model=modelo)
     return image_bytes
