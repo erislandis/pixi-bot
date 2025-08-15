@@ -3,3 +3,4 @@ huggingface-hub
 Pillow
 requests
 python-dotenv
+craiyon

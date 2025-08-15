@@ -1,6 +1,4 @@
 import os
-import requests
-import base64
 from io import BytesIO
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -12,12 +10,13 @@ from telegram.ext import (
     CallbackQueryHandler,
     filters,
 )
+from craiyon import Craiyon
 
 # Cargar variables de entorno
 load_dotenv()
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
-# Diccionario de "estilos" para Craiyon (solo texto para reforzar prompt)
+# Diccionario de estilos (solo texto para reforzar el prompt)
 MODELOS = {
     "Anime": "en estilo anime",
     "Realista": "en estilo realista y fotográfico",
@@ -29,17 +28,13 @@ usuario_modelo = {}
 
 # Función para generar imágenes con Craiyon
 def generar_imagen_craiyon(prompt: str):
-    url = "https://backend.craiyon.com/generate"
-    payload = {"prompt": prompt}
-    response = requests.post(url, json=payload, timeout=120)
-    response.raise_for_status()
-
-    data = response.json()
+    generator = Craiyon()
+    result = generator.generate(prompt)
     imagenes = []
-    for img_base64 in data.get("images", []):
-        img_data = base64.b64decode(img_base64)
-        bio = BytesIO(img_data)
-        bio.name = "imagen.jpg"
+    for idx, img in enumerate(result.images):
+        bio = BytesIO()
+        img.save(bio, format="JPEG")
+        bio.name = f"imagen_{idx}.jpg"
         bio.seek(0)
         imagenes.append(bio)
     return imagenes
