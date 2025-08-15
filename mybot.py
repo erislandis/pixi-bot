@@ -1,7 +1,7 @@
 import os
-from io import BytesIO
-import requests
 from dotenv import load_dotenv
+from io import BytesIO
+from huggingface_hub import InferenceClient
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -17,11 +17,18 @@ load_dotenv()
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 HF_TOKEN = os.getenv("HF_TOKEN")
 
-# Diccionario con modelos gratuitos
+# Diccionario con modelos disponibles
 MODELOS = {
-    "OpenJourney v4": "prompthero/openjourney-v4",
-    "Stable Diffusion 2.1": "stabilityai/stable-diffusion-2-1"
+    "Anime": "black-forest-labs/FLUX.1-Krea-dev",
+    "Realista": "Qwen/Qwen-Image",
+    "Estilo Flux": "black-forest-labs/FLUX.1-schnell",
 }
+
+# Cliente fal-ai con el token
+client = InferenceClient(
+    provider="fal-ai",
+    api_key=HF_TOKEN,
+)
 
 # Variable global para guardar el modelo seleccionado por usuario
 usuario_modelo = {}
@@ -32,7 +39,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
-        "¡Hola! Selecciona el tipo de imagen que deseas generar:", reply_markup=reply_markup
+        "¡Hola! Por favor selecciona el tipo de imagen que deseas generar:", reply_markup=reply_markup
     )
 
 async def reload(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -49,28 +56,12 @@ async def seleccionar_modelo(update: Update, context: ContextTypes.DEFAULT_TYPE)
         text=f"Modelo seleccionado: {modelo_elegido}. Ahora envíame el texto para generar la imagen."
     )
 
-# Función para generar imagen usando la API pública de Hugging Face
-def generar_imagen_hf(prompt: str, modelo: str):
-    url = f"https://api-inference.huggingface.co/models/{modelo}"
-    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
-    payload = {
-        "inputs": prompt
-    }
-    response = requests.post(url, headers=headers, json=payload)
-    content_type = response.headers.get("content-type")
-
-    if content_type.startswith("image/"):
-        return response.content
-    elif content_type == "application/json":
-        data = response.json()
-        if "error" in data:
-            raise Exception(data["error"])
-        if isinstance(data, list) and "image" in data[0]:
-            import base64
-            return base64.b64decode(data[0]["image"])
-        raise Exception(f"Respuesta desconocida de la API: {data}")
-    else:
-        raise Exception(f"Tipo de contenido inesperado: {content_type}")
+async def generar_imagen(prompt: str, modelo: str):
+    image = client.text_to_image(
+        prompt,
+        model=modelo
+    )
+    return image  # Objeto PIL.Image
 
 async def manejar_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     usuario_id = update.message.from_user.id
@@ -85,8 +76,10 @@ async def manejar_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Generando imagen, por favor espera...")
 
     try:
-        img_bytes = generar_imagen_hf(prompt, modelo_actual)
-        bio = BytesIO(img_bytes)
+        image = await generar_imagen(prompt, modelo_actual)
+        bio = BytesIO()
+        image.save(bio, format="PNG")
+        bio.seek(0)
         await update.message.reply_photo(photo=bio)
     except Exception as e:
         await update.message.reply_text(f"Error generando la imagen: {str(e)}")
