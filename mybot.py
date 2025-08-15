@@ -19,9 +19,9 @@ HF_TOKEN = os.getenv("HF_TOKEN")
 
 # Modelos gratuitos de Hugging Face para texto a imagen
 MODELOS = {
-    "Anime": "Linaqruf/anything-v3.0",  # Anime-style Stable Diffusion
+    "Anime": "Linaqruf/anything-v3.0",  # Anime-style
     "Realista": "runwayml/stable-diffusion-v1-5",  # Realistic SD 1.5
-    "Estilo Flux": "stabilityai/stable-diffusion-2-1-base"  # Más detalle
+    "Estilo Flux": "stabilityai/stable-diffusion-2-1-base"  # Futurista
 }
 
 # Cliente Hugging Face
@@ -59,10 +59,10 @@ async def seleccionar_modelo(update: Update, context: ContextTypes.DEFAULT_TYPE)
         text=f"Estilo seleccionado: {modelo_elegido}. Ahora envíame el texto para generar la imagen."
     )
 
-# Función para generar imagen con HF
-async def generar_imagen(prompt: str, modelo: str):
+# Función para generar imagen con HF (no async)
+def generar_imagen(prompt: str, modelo: str):
     image_bytes = client.text_to_image(prompt, model=modelo)
-    return image_bytes  # Bytes de la imagen generada
+    return image_bytes
 
 # Manejar texto del usuario y generar imagen
 async def manejar_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -76,7 +76,7 @@ async def manejar_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Generando imagen... espera unos segundos.")
 
     try:
-        image_bytes = await generar_imagen(prompt, modelo_actual)
+        image_bytes = generar_imagen(prompt, modelo_actual)
         bio = BytesIO(image_bytes)
         bio.name = "imagen.png"
         bio.seek(0)
