@@ -57,8 +57,9 @@ async def seleccionar_modelo(update: Update, context: ContextTypes.DEFAULT_TYPE)
         text=f"Modelo seleccionado: {modelo_elegido}. Ahora envíame el texto para generar la imagen."
     )
 
-def generar_imagen(prompt: str, modelo: str):
-    image = client.text_to_image(
+# Función async para generar la imagen usando Hugging Face
+async def generar_imagen(prompt: str, modelo: str):
+    image = await client.text_to_image(
         prompt,
         model=MODELOS[modelo]
     )
@@ -77,8 +78,8 @@ async def manejar_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Generando imagen, por favor espera...")
 
     try:
-        loop = asyncio.get_event_loop()
-        image = await loop.run_in_executor(None, generar_imagen, prompt, modelo_actual)
+        # Llamada async a generar_imagen
+        image = await generar_imagen(prompt, modelo_actual)
         bio = BytesIO()
         image.save(bio, format="PNG")
         bio.seek(0)
