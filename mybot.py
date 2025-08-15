@@ -1,4 +1,5 @@
 import os
+import asyncio
 from dotenv import load_dotenv
 from io import BytesIO
 from huggingface_hub import InferenceClient
@@ -56,7 +57,7 @@ async def seleccionar_modelo(update: Update, context: ContextTypes.DEFAULT_TYPE)
         text=f"Modelo seleccionado: {modelo_elegido}. Ahora envíame el texto para generar la imagen."
     )
 
-async def generar_imagen(prompt: str, modelo: str):
+def generar_imagen(prompt: str, modelo: str):
     image = client.text_to_image(
         prompt,
         model=MODELOS[modelo]
@@ -70,11 +71,14 @@ async def manejar_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Por favor, primero selecciona un modelo usando /start."
         )
         return
+
     modelo_actual = usuario_modelo[usuario_id]
     prompt = update.message.text
     await update.message.reply_text("Generando imagen, por favor espera...")
+
     try:
-        image = await generar_imagen(prompt, modelo_actual)
+        loop = asyncio.get_event_loop()
+        image = await loop.run_in_executor(None, generar_imagen, prompt, modelo_actual)
         bio = BytesIO()
         image.save(bio, format="PNG")
         bio.seek(0)
