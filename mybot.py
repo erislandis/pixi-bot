@@ -1,166 +1,187 @@
-import telegram
+import os
+import io
+import requests
+from PIL import Image
+from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    Updater,
-    CommandHandler,
-    MessageHandler,
-    filters,
-    CallbackContext,
-    CallbackQueryHandler,
     ApplicationBuilder,
+    CommandHandler,
+    CallbackQueryHandler,
+    MessageHandler,
     ContextTypes,
+    filters,
 )
-import requests
-import io
-from PIL import Image
-from os import environ  # Para leer variables de entorno
+from huggingface_hub import InferenceClient
 
-# --- Configuración ---
-TELEGRAM_TOKEN = environ.get("TELEGRAM_TOKEN") or "TU_TOKEN_DE_TELEGRAM"  # Reemplaza con tu token de Telegram
-HUGGINGFACE_API_TOKEN = environ.get("HUGGINGFACE_API_TOKEN") or "TU_API_TOKEN_DE_HUGGINGFACE"  # Reemplaza con tu token de Hugging Face
-HUGGINGFACE_API_URL = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-2"  # Modelo Stable Diffusion 2 (puedes cambiarlo)
+# Cargar variables de entorno
+load_dotenv()
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+HF_TOKEN = os.getenv("HUGGINGFACE_API_TOKEN")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
-# --- Variables Globales (Asegúrate de que estén inicializadas en algún lugar) ---
-usuario_sistema = []  # Ejemplo: lista
-usuario_modelo = []  # Ejemplo: lista
-usuario_proveedor = []  # Ejemplo: lista
+# Sistemas y modelos disponibles con proveedores compatibles
+SISTEMAS = ["huggingface", "openrouter"]
 
-# --- Funciones auxiliares ---
-def generate_image(text):
-    """Genera una imagen a partir de un texto usando la API de Hugging Face."""
-    headers = {"Authorization": f"Bearer {HUGGINGFACE_API_TOKEN}"}
-    payload = {"inputs": text}
-    response = requests.post(HUGGINGFACE_API_URL, headers=headers, json=payload)
+MODELOS_HF = {
+    "Stable Diffusion 2.1 Base": {
+        "id": "stabilityai/stable-diffusion-2-1-base",
+        "proveedores": ["auto", "replicate", "fal-ai", "together"],
+    },
+    "FLUX 1 Schnell": {
+        "id": "black-forest-labs/FLUX.1-schnell",
+        "proveedores": ["fal-ai", "together", "replicate"],
+    },
+    "Hyper-SD": {
+        "id": "ByteDance/Hyper-SD",
+        "proveedores": ["fal-ai", "replicate", "auto"],
+    },
+}
 
-    if response.status_code == 200:
-        image_bytes = io.BytesIO(response.content)
-        try:
-            image = Image.open(image_bytes)
-            return image
-        except Exception as e:
-            print(f"Error al abrir la imagen: {e}")
-            return None
-    else:
-        print(f"Error en la API de Hugging Face: {response.status_code} - {response.text}")
-        return None
+MODELOS_OR = {
+    "Stable Diffusion 2.1 Base": "stabilityai/stable-diffusion-2-1-base",
+    "FLUX 1 Schnell": "black-forest-labs/FLUX.1-schnell",
+    "Hyper-SD": "ByteDance/Hyper-SD",
+    "Flux Realism LoRA": "XLabs-AI/flux-RealismLora",
+}
 
-def send_image_to_telegram(image, chat_id, bot):
-    """Envía la imagen a Telegram."""
-    if image:
-        bio = io.BytesIO()
-        bio.name = 'image.png'
-        image.save(bio, 'PNG')
-        bio.seek(0)  # Regresar al inicio del buffer
-        bot.send_photo(chat_id=chat_id, photo=bio)
-    else:
-        bot.send_message(chat_id=chat_id, text="No se pudo generar la imagen. Intenta con otro texto.")
+# Guardar selección de cada usuario en diccionarios
+usuario_sistema = {}
+usuario_modelo = {}
+usuario_proveedor = {}
 
-
-# --- Handlers del bot ---
-def start(update: Update, context: CallbackContext):
-    """Maneja el comando /start."""
-    context.bot.send_message(chat_id=update.effective_chat.id, text="¡Hola! Soy un bot que genera imágenes a partir de texto. Usa /imagen [tu texto] para crear una imagen.")
-    # Aquí podrías agregar botones para seleccionar proveedores/modelos
-
-def reload(update: Update, context: CallbackContext):
-    """Maneja el comando /reload."""
-    usuario_sistema.clear()
-    usuario_modelo.clear()
-    usuario_proveedor.clear()
-    context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text="Bot reiniciado. Usa /start para comenzar nuevamente."
+# Comando start: seleccionar sistema
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [[InlineKeyboardButton(s, callback_data=f"sistema|{s}")] for s in SISTEMAS]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(
+        "Selecciona el sistema para generación de imágenes:", reply_markup=reply_markup
     )
 
-
-def seleccionar(update: Update, context: CallbackContext):
-    """Maneja las selecciones desde los botones Inline."""
+# Selector para sistema, modelo y proveedor
+async def seleccionar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    query.answer()  # Siempre responde a la query
+    await query.answer()
+    usuario_id = query.from_user.id
+    data = query.data.split("|")
 
-    # Ejemplo: Asumiendo que la data del botón es algo como "modelo_123" o "proveedor_456"
-    data = query.data
-    if data.startswith("modelo_"):
-        modelo_id = data[len("modelo_"):]
-        # Aquí deberías cargar el modelo (usando modelo_id)
-        # Y verificar que tenga un proveedor asociado
-        if tiene_proveedor_asociado(modelo_id): # Reemplaza con tu función
-            usuario_modelo.append(modelo_id)  # O como estés guardando la selección
-            query.edit_message_text(text=f"Modelo {modelo_id} seleccionado.")
+    if data[0] == "sistema":
+        sistema = data[1]
+        usuario_sistema[usuario_id] = sistema
+        if sistema == "huggingface":
+            modelos = MODELOS_HF.keys()
         else:
-            query.edit_message_text(text=f"El modelo {modelo_id} no tiene un proveedor asociado y no puede ser usado.")
+            modelos = MODELOS_OR.keys()
+        keyboard = [[InlineKeyboardButton(m, callback_data=f"modelo|{m}")] for m in modelos]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(
+            text=f"Sistema '{sistema}' seleccionado. Ahora selecciona un modelo:", reply_markup=reply_markup
+        )
 
+    elif data[0] == "modelo":
+        modelo = data[1]
+        usuario_modelo[usuario_id] = modelo
+        sistema = usuario_sistema.get(usuario_id)
+        if sistema == "huggingface":
+            proveedores = MODELOS_HF[modelo]["proveedores"]
+            keyboard = [[InlineKeyboardButton(p, callback_data=f"proveedor|{p}")] for p in proveedores]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text(
+                text=f"Modelo '{modelo}' seleccionado. Ahora selecciona un proveedor:", reply_markup=reply_markup
+            )
+        else:
+            usuario_proveedor[usuario_id] = "openrouter"
+            await query.edit_message_text(
+                text=f"Modelo '{modelo}' seleccionado en OpenRouter.\nAhora envía el texto para generar la imagen."
+            )
 
-    elif data.startswith("proveedor_"):
-        proveedor_id = data[len("proveedor_"):]
-        # Aquí deberías cargar el proveedor (usando proveedor_id)
-        usuario_proveedor.append(proveedor_id)  # O como estés guardando la selección
-        query.edit_message_text(text=f"Proveedor {proveedor_id} seleccionado.")
+    elif data[0] == "proveedor":
+        proveedor = data[1]
+        usuario_proveedor[usuario_id] = proveedor
+        modelo = usuario_modelo.get(usuario_id)
+        await query.edit_message_text(
+            text=f"Proveedor '{proveedor}' seleccionado.\nAhora envía el texto para generar la imagen con el modelo '{modelo}'."
+        )
     else:
-        query.edit_message_text(text="Opción inválida.")
+        await query.edit_message_text(text="Opción inválida.")
 
+# Función para generar imagen con Hugging Face
+def generar_imagen_hf(prompt, modelo, proveedor):
+    client = InferenceClient(provider=proveedor, api_key=HF_TOKEN)
+    model_id = MODELOS_HF[modelo]["id"]
+    image = client.text_to_image(prompt, model=model_id)
+    return image
 
-def manejar_prompt(update: Update, context: CallbackContext):
-    """Maneja el prompt del usuario."""
+# Función para generar imagen con OpenRouter
+def generar_imagen_or(prompt, modelo):
+    url = "https://openrouter.ai/api/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    data = {
+        "model": modelo,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    response = requests.post(url, headers=headers, json=data)
+    response.raise_for_status()
+    result = response.json()
+    image_url = result.get("images", [None])[0]
+    if image_url is None:
+        raise Exception("No se encontró imagen en la respuesta de OpenRouter")
+    img_resp = requests.get(image_url)
+    img_resp.raise_for_status()
+    return Image.open(io.BytesIO(img_resp.content))
+
+# Handler para procesar texto y generar imagen
+async def manejar_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    usuario_id = update.message.from_user.id
     chat_id = update.effective_chat.id
     prompt = update.message.text
 
-    # ***AQUI ES DONDE DEBERIAS HACER LA VALIDACION FINAL***
-    if not usuario_modelo or not usuario_proveedor:
-        context.bot.send_message(chat_id=chat_id, text="Por favor, selecciona un modelo y un proveedor antes de enviar un prompt.")
+    if (
+        usuario_id not in usuario_sistema or
+        usuario_id not in usuario_modelo or
+        usuario_id not in usuario_proveedor
+    ):
+        await context.bot.send_message(chat_id=chat_id, text="Por favor, usa /start para seleccionar sistema, modelo y proveedor primero.")
         return
 
-    # **Validar que el modelo y el proveedor seleccionados son compatibles**
-    # if not es_compatible(usuario_modelo[-1], usuario_proveedor[-1]):  # Reemplaza con tu lógica
-    #     context.bot.send_message(chat_id=chat_id, text="El modelo y el proveedor seleccionados no son compatibles.")
-    #     return
+    sistema = usuario_sistema[usuario_id]
+    modelo = usuario_modelo[usuario_id]
+    proveedor = usuario_proveedor[usuario_id]
 
-    context.bot.send_message(chat_id=chat_id, text="Generando imagen... (Esto puede tardar)")
-    image = generate_image(prompt)  # Reemplaza con tu función de generación
-    send_image_to_telegram(image, chat_id, context.bot)
+    await context.bot.send_message(chat_id=chat_id, text="Generando imagen, por favor espera...")
 
+    try:
+        loop = asyncio.get_event_loop()
+        if sistema == "huggingface":
+            imagen = await loop.run_in_executor(None, generar_imagen_hf, prompt, modelo, proveedor)
+        else:
+            imagen = await loop.run_in_executor(None, generar_imagen_or, prompt, MODELOS_OR[modelo])
 
-def error(update: Update, context: CallbackContext):
-    """Logea errores causados por updates."""
-    print(f"Update {update} causó error {context.error}")
+        bio = io.BytesIO()
+        imagen.save(bio, format="PNG")
+        bio.seek(0)
+        await context.bot.send_photo(chat_id=chat_id, photo=bio)
 
+    except Exception as e:
+        await context.bot.send_message(chat_id=chat_id, text=f"Error generando la imagen: {str(e)}")
 
-# --- Funciones para validar que el modelo tiene proveedor (reemplaza con tu lógica) ---
-def tiene_proveedor_asociado(modelo_id):
-    """Reemplaza esto con la lógica para verificar si el modelo tiene un proveedor"""
-    # Esto es solo un ejemplo. En la realidad, consultarías una base de datos, etc.
-    # para verificar que el modelo tiene un proveedor asociado.
-    # Por ejemplo:
-    # if modelo_id in base_de_datos_de_modelos and base_de_datos_de_modelos[modelo_id]["proveedor"] is not None:
-    #     return True
-    # else:
-    #     return False
+# Comando reload para reiniciar estados
+async def reload(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    usuario_sistema.clear()
+    usuario_modelo.clear()
+    usuario_proveedor.clear()
+    await context.bot.send_message(chat_id=update.effective_chat.id, text="Bot reiniciado. Usa /start para comenzar.")
 
-    # Para este ejemplo, simplemente retornamos True para el modelo 1 y False para los demás
-    if modelo_id == "1":
-        return True
-    else:
-        return False
-
-
-def es_compatible(modelo_id, proveedor_id):
-     """Reemplaza esto con la lógica para verificar si el modelo y proveedor son compatibles"""
-     # Esto es solo un ejemplo. En la realidad, consultarías una base de datos, etc.
-     return True
-
-# --- Configuración del bot ---
 def main():
-    """Inicia el bot."""
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("reload", reload))
     app.add_handler(CallbackQueryHandler(seleccionar))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, manejar_prompt))
-    app.add_error_handler(error)  # Añadido el handler de errores
-
-    # Iniciar el bot
     app.run_polling()
 
-
-if __name__ == "__main__": # Corrección de sintaxis
+if __name__ == "__main__":
     main()
