@@ -1,108 +1,59 @@
-import os
 import asyncio
-from io import BytesIO
-from dotenv import load_dotenv
-from huggingface_hub import InferenceClient
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    ApplicationBuilder, CommandHandler, MessageHandler,
-    ContextTypes, CallbackQueryHandler, filters,
-)
+import os
 import requests
+from io import BytesIO
 from PIL import Image
 
-load_dotenv()
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-HF_TOKEN = os.getenv("HF_TOKEN")
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")  # API key para OpenRouter
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    ContextTypes,
+    CallbackQueryHandler,
+    MessageHandler,
+    filters,
+)
 
-# Sistemas disponibles
-SISTEMAS = ["huggingface", "openrouter"]
+# --- Reemplaza con tus tokens y claves ---
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN") # Define como variable de entorno
+HF_TOKEN = os.environ.get("HF_TOKEN") # Define como variable de entorno
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY") # Define como variable de entorno
 
-# Modelos Hugging Face con proveedores compatibles
+# --- Define tus modelos y proveedores ---
 MODELOS_HF = {
-    "Stable Diffusion 2.1 Base": {
-        "id": "stabilityai/stable-diffusion-2-1-base",
-        "proveedores": ["auto", "replicate", "fal-ai", "together"]
-    },
-    "FLUX 1 Schnell": {
-        "id": "black-forest-labs/FLUX.1-schnell",
-        "proveedores": ["fal-ai", "together", "replicate"]
-    },
-    "Hyper-SD": {
-        "id": "ByteDance/Hyper-SD",
-        "proveedores": ["fal-ai", "replicate", "auto"]
-    },
+    "sdxl": {"id": "stabilityai/stable-diffusion-xl-base-1.0"}, # Ejemplo
+    "sdv15": {"id": "runwayml/stable-diffusion-v1-5"}, # Ejemplo
 }
 
-# Modelos OpenRouter disponibles
 MODELOS_OR = {
-    "Stable Diffusion 2.1 Base": "stabilityai/stable-diffusion-2-1-base",
-    "FLUX 1 Schnell": "black-forest-labs/FLUX.1-schnell",
-    "Hyper-SD": "ByteDance/Hyper-SD",
-    "Flux Realism LoRA": "XLabs-AI/flux-RealismLora",
+    "dall-e-3": "openai/dall-e-3", # Ejemplo
+    "sdxl-openrouter": "stabilityai/stable-diffusion-xl-base-1.0", # Ejemplo
 }
 
-# Guardar eleccion por usuario
-usuario_sistema = {}
-usuario_modelo = {}
-usuario_proveedor = {}
+PROVEEDORES_HF = ["huggingface", "aws", "google"] # Ejemplo
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [[InlineKeyboardButton(s, callback_data=f"sistema|{s}")] for s in SISTEMAS]
-    await update.message.reply_text(
-        "Selecciona el sistema para generación de imágenes:", reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+# --- Variables para almacenar la selección del usuario ---
+usuario_sistema = {} # {usuario_id: "huggingface" o "openrouter"}
+usuario_modelo = {} # {usuario_id: "modelo"}
+usuario_proveedor = {} # {usuario_id: "proveedor"}
 
-async def seleccionar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    data = query.data.split("|")
-    usuario_id = query.from_user.id
+# --- Importante: Usa InferenceClient solo si eliges huggingface como proveedor ---
+try:
+    from huggingface_hub import InferenceClient
+except ImportError:
+    print("Advertencia: No se pudo importar InferenceClient. Asegúrate de instalar huggingface_hub si usas Hugging Face.")
+    InferenceClient = None # Para evitar errores si no se usa Hugging Face
 
-    if data[0] == "sistema":
-        sistema = data[1]
-        usuario_sistema[usuario_id] = sistema
-        if sistema == "huggingface":
-            keyboard = [[InlineKeyboardButton(m, callback_data=f"model|{m}")] for m in MODELOS_HF.keys()]
-        else:
-            keyboard = [[InlineKeyboardButton(m, callback_data=f"model|{m}")] for m in MODELOS_OR.keys()]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text(
-            text=f"Sistema '{sistema}' seleccionado. Ahora elige el modelo:",
-            reply_markup=reply_markup,
-        )
-
-    elif data[0] == "model":
-        modelo = data[1]
-        usuario_modelo[usuario_id] = modelo
-        sistema = usuario_sistema.get(usuario_id)
-        if sistema == "huggingface":
-            proveedores = MODELOS_HF[modelo]["proveedores"]
-            keyboard = [[InlineKeyboardButton(p, callback_data=f"provider|{p}")] for p in proveedores]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.edit_message_text(
-                text=f"Modelo '{modelo}' seleccionado.\nElige proveedor:", reply_markup=reply_markup
-            )
-        else:
-            usuario_proveedor[usuario_id] = "openrouter"
-            await query.edit_message_text(
-                text=f"Modelo '{modelo}' seleccionado en OpenRouter.\nAhora envía el texto para generar la imagen."
-            )
-
-    elif data[0] == "provider":
-        proveedor = data[1]
-        usuario_proveedor[usuario_id] = proveedor
-        modelo = usuario_modelo.get(usuario_id)
-        await query.edit_message_text(
-            text=f"Proveedor '{proveedor}' seleccionado.\nAhora envía el texto para generar la imagen con el modelo '{modelo}'."
-        )
-
+# --- Funciones de generación de imágenes ---
 def generar_imagen_hf(prompt, modelo, proveedor):
+    if InferenceClient is None:
+        raise Exception("InferenceClient no está disponible. Asegúrate de instalar huggingface_hub.")
+
     client = InferenceClient(provider=proveedor, api_key=HF_TOKEN)
     model_id = MODELOS_HF[modelo]["id"]
     image = client.text_to_image(prompt, model=model_id)
     return image
+
 
 def generar_imagen_or(prompt, modelo):
     url = "https://openrouter.ai/api/v1/chat/completions"
@@ -112,9 +63,7 @@ def generar_imagen_or(prompt, modelo):
     }
     data = {
         "model": modelo,
-        "messages": [
-            {"role": "user", "content": prompt}
-        ],
+        "messages": [{"role": "user", "content": prompt}],
     }
     response = requests.post(url, headers=headers, json=data)
     response.raise_for_status()
@@ -126,13 +75,100 @@ def generar_imagen_or(prompt, modelo):
     img_resp.raise_for_status()
     return Image.open(BytesIO(img_resp.content))
 
+
+# --- Funciones de Telegram ---
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Muestra los botones de selección de sistema."""
+    keyboard = [
+        [
+            InlineKeyboardButton("Hugging Face", callback_data="sistema_huggingface"),
+            InlineKeyboardButton("OpenRouter", callback_data="sistema_openrouter"),
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(
+        "Por favor, selecciona el sistema que deseas utilizar:", reply_markup=reply_markup
+    )
+
+
+async def seleccionar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Maneja las selecciones del usuario (sistema, modelo, proveedor)."""
+    query = update.callback_query
+    await query.answer()
+
+    data = query.data
+
+    if data.startswith("sistema_"):
+        sistema = data.split("_")[1]
+        usuario_sistema[query.from_user.id] = sistema
+        await query.edit_message_text(f"Has seleccionado el sistema: {sistema}")
+        await mostrar_modelos(update, context) # Muestra la selección de modelos
+    elif data.startswith("modelo_"):
+        modelo = data.split("_")[1]
+        usuario_modelo[query.from_user.id] = modelo
+        await query.edit_message_text(f"Has seleccionado el modelo: {modelo}")
+        if usuario_sistema[query.from_user.id] == "huggingface":
+            await mostrar_proveedores(update, context) # Muestra la selección de proveedores (solo para Hugging Face)
+        else:
+            await query.message.reply_text(
+                "¡Listo! Ahora envíame un prompt para generar una imagen."
+            ) # Salta la selección de proveedor si es OpenRouter
+    elif data.startswith("proveedor_"):
+        proveedor = data.split("_")[1]
+        usuario_proveedor[query.from_user.id] = proveedor
+        await query.edit_message_text(f"Has seleccionado el proveedor: {proveedor}")
+        await query.message.reply_text(
+            "¡Listo! Ahora envíame un prompt para generar una imagen."
+        )
+    else:
+        await query.message.reply_text("Opción inválida.")
+
+
+async def mostrar_modelos(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Muestra los botones de selección de modelo."""
+    query = update.callback_query
+
+    if usuario_sistema.get(query.from_user.id) == "huggingface":
+        modelos = MODELOS_HF.keys()
+    elif usuario_sistema.get(query.from_user.id) == "openrouter":
+        modelos = MODELOS_OR.keys()
+    else:
+        await query.message.reply_text(
+            "Por favor, usa /start para seleccionar sistema primero."
+        )
+        return
+
+    keyboard = [
+        [InlineKeyboardButton(modelo, callback_data=f"modelo_{modelo}") for modelo in modelos]
+    ] # Una fila de botones para cada modelo
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.reply_text(
+        "Por favor, selecciona el modelo que deseas utilizar:", reply_markup=reply_markup
+    )
+
+
+async def mostrar_proveedores(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Muestra los botones de selección de proveedor (solo para Hugging Face)."""
+    query = update.callback_query
+    keyboard = [
+        [
+            InlineKeyboardButton(proveedor, callback_data=f"proveedor_{proveedor}")
+            for proveedor in PROVEEDORES_HF
+        ]
+    ] # Una fila de botones para cada proveedor
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.reply_text(
+        "Por favor, selecciona el proveedor de Hugging Face:", reply_markup=reply_markup
+    )
+
+
 async def manejar_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     usuario_id = update.message.from_user.id
 
     if (
         usuario_id not in usuario_sistema
         or usuario_id not in usuario_modelo
-        or usuario_id not in usuario_proveedor
+        or (usuario_sistema[usuario_id] == "huggingface" and usuario_id not in usuario_proveedor)
     ):
         await update.message.reply_text(
             "Por favor, usa /start para seleccionar sistema, modelo y proveedor primero."
@@ -141,7 +177,8 @@ async def manejar_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     sistema = usuario_sistema[usuario_id]
     modelo = usuario_modelo[usuario_id]
-    proveedor = usuario_proveedor[usuario_id]
+    proveedor = usuario_proveedor.get(usuario_id) # 'get' para manejar el caso de OpenRouter
+
     prompt = update.message.text
 
     await update.message.reply_text("Generando imagen, por favor espera...")
@@ -164,11 +201,15 @@ async def manejar_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"Error generando la imagen: {str(e)}")
 
+
 async def reload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     usuario_sistema.clear()
     usuario_modelo.clear()
     usuario_proveedor.clear()
-    await update.message.reply_text("Bot reiniciado. Usa /start para comenzar nuevamente.")
+    await update.message.reply_text(
+        "Bot reiniciado. Usa /start para comenzar nuevamente."
+    )
+
 
 def main():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
@@ -177,6 +218,7 @@ def main():
     app.add_handler(CallbackQueryHandler(seleccionar))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, manejar_prompt))
     app.run_polling()
+
 
 if __name__ == "__main__":
     main()
