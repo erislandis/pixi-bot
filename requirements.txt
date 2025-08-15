@@ -1,0 +1,5 @@
+python-telegram-bot==22.3
+huggingface-hub
+Pillow
+requests
+python-dotenv
